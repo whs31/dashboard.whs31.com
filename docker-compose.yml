@@ -1,0 +1,11 @@
+services:
+  crash-server:
+    build: .
+    container_name: crash-report-app
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./crash_reports:/app/crash_reports
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped

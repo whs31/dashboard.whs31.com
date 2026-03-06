@@ -35,6 +35,8 @@ struct ReportMetadata {
   steps_to_reproduce: Option<String>,
   minidump_filename: Option<String>,
   log_files: Vec<String>,
+  #[serde(default)]
+  resolved: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,6 +45,8 @@ struct ReportListItem {
   timestamp: String,
   app_name: Option<String>,
   directory: String,
+  #[serde(default)]
+  resolved: bool,
 }
 
 #[derive(Debug)]
@@ -138,6 +142,7 @@ impl CrashReport {
         "steps_to_reproduce": self.steps_to_reproduce,
         "minidump_filename": self.minidump.as_ref().map(|(name, _)| name),
         "log_files": self.log_files.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+        "resolved": false,
     });
 
     let metadata_path = report_dir.join("metadata.json");
@@ -243,6 +248,7 @@ async fn list_reports() -> Result<Json<Vec<ReportListItem>>, AppError> {
             timestamp: metadata.timestamp,
             app_name: metadata.app_name,
             directory: dir_name,
+            resolved: metadata.resolved,
           });
         }
       }
@@ -294,6 +300,38 @@ async fn download_file(Path((report_dir, filename)): Path<(String, String)>) -> 
   ).into_response())
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ResolveRequest {
+  resolved: bool,
+}
+
+async fn toggle_resolve(
+  Path(report_dir): Path<String>,
+  Json(payload): Json<ResolveRequest>,
+) -> Result<Response, AppError> {
+  let metadata_path = PathBuf::from("crash_reports").join(&report_dir).join("metadata.json");
+
+  let metadata_content = fs::read_to_string(&metadata_path)
+    .await
+    .context("Failed to read metadata file")?;
+
+  let mut metadata: ReportMetadata = serde_json::from_str(&metadata_content)
+    .context("Failed to parse metadata")?;
+
+  metadata.resolved = payload.resolved;
+
+  let metadata_str = serde_json::to_string_pretty(&metadata)
+    .context("Failed to serialize metadata")?;
+
+  fs::write(&metadata_path, metadata_str)
+    .await
+    .context("Failed to write metadata file")?;
+
+  info!("Updated resolve status for {}: {}", report_dir, payload.resolved);
+
+  Ok((StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response())
+}
+
 fn create_app() -> Router {
   let cors = CorsLayer::new()
     .allow_origin(Any)
@@ -305,6 +343,7 @@ fn create_app() -> Router {
     .route("/api/upload", head(health_check))
     .route("/api/reports", get(list_reports))
     .route("/api/reports/{report_dir}", get(get_report))
+    .route("/api/reports/{report_dir}/resolve", post(toggle_resolve))
     .route("/api/reports/{report_dir}/download/{filename}", get(download_file))
     .fallback_service(ServeDir::new("web/dist"))
     .layer(cors)
