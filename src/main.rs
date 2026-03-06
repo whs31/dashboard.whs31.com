@@ -39,16 +39,6 @@ struct ReportMetadata {
   resolved: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ReportListItem {
-  report_id: String,
-  timestamp: String,
-  app_name: Option<String>,
-  directory: String,
-  #[serde(default)]
-  resolved: bool,
-}
-
 #[derive(Debug)]
 struct AppError(anyhow::Error);
 
@@ -87,7 +77,7 @@ struct CrashReport {
 impl CrashReport {
   fn new() -> Self {
     let report_id = Uuid::new_v4().to_string();
-    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let timestamp = Local::now().to_rfc3339().to_string();
 
     Self {
       report_id,
@@ -232,24 +222,17 @@ async fn upload_crash_report(mut multipart: Multipart) -> Result<Response, AppEr
   Ok((StatusCode::OK, Json(response)).into_response())
 }
 
-async fn list_reports() -> Result<Json<Vec<ReportListItem>>, AppError> {
+async fn list_reports() -> Result<Json<Vec<ReportMetadata>>, AppError> {
   let mut reports = Vec::new();
   let mut entries = fs::read_dir("crash_reports").await?;
 
   while let Some(entry) = entries.next_entry().await? {
     if entry.file_type().await?.is_dir() {
-      let dir_name = entry.file_name().to_string_lossy().to_string();
       let metadata_path = entry.path().join("metadata.json");
 
       if let Ok(metadata_content) = fs::read_to_string(&metadata_path).await {
         if let Ok(metadata) = serde_json::from_str::<ReportMetadata>(&metadata_content) {
-          reports.push(ReportListItem {
-            report_id: metadata.report_id,
-            timestamp: metadata.timestamp,
-            app_name: metadata.app_name,
-            directory: dir_name,
-            resolved: metadata.resolved,
-          });
+          reports.push(metadata);
         }
       }
     }
@@ -260,25 +243,29 @@ async fn list_reports() -> Result<Json<Vec<ReportListItem>>, AppError> {
 }
 
 async fn get_report(Path(report_dir): Path<String>) -> Result<Json<ReportMetadata>, AppError> {
-  let metadata_path = PathBuf::from("crash_reports").join(&report_dir).join("metadata.json");
+  let metadata_path = PathBuf::from("crash_reports")
+    .join(&report_dir)
+    .join("metadata.json");
   let metadata_content = fs::read_to_string(&metadata_path)
     .await
     .context("Failed to read metadata file")?;
-  let metadata: ReportMetadata = serde_json::from_str(&metadata_content)
-    .context("Failed to parse metadata")?;
+  let metadata: ReportMetadata =
+    serde_json::from_str(&metadata_content).context("Failed to parse metadata")?;
   Ok(Json(metadata))
 }
 
-async fn download_file(Path((report_dir, filename)): Path<(String, String)>) -> Result<Response, AppError> {
-  let file_path = PathBuf::from("crash_reports").join(&report_dir).join(&filename);
+async fn download_file(
+  Path((report_dir, filename)): Path<(String, String)>,
+) -> Result<Response, AppError> {
+  let file_path = PathBuf::from("crash_reports")
+    .join(&report_dir)
+    .join(&filename);
 
   if !file_path.exists() {
     return Ok((StatusCode::NOT_FOUND, "File not found").into_response());
   }
 
-  let content = fs::read(&file_path)
-    .await
-    .context("Failed to read file")?;
+  let content = fs::read(&file_path).await.context("Failed to read file")?;
 
   let content_type = if filename.ends_with(".dmp") {
     "application/octet-stream"
@@ -290,14 +277,20 @@ async fn download_file(Path((report_dir, filename)): Path<(String, String)>) -> 
     "application/octet-stream"
   };
 
-  Ok((
-    StatusCode::OK,
-    [
-      (header::CONTENT_TYPE, content_type),
-      (header::CONTENT_DISPOSITION, &format!("attachment; filename=\"{}\"", filename)),
-    ],
-    content,
-  ).into_response())
+  Ok(
+    (
+      StatusCode::OK,
+      [
+        (header::CONTENT_TYPE, content_type),
+        (
+          header::CONTENT_DISPOSITION,
+          &format!("attachment; filename=\"{}\"", filename),
+        ),
+      ],
+      content,
+    )
+      .into_response(),
+  )
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -309,25 +302,30 @@ async fn toggle_resolve(
   Path(report_dir): Path<String>,
   Json(payload): Json<ResolveRequest>,
 ) -> Result<Response, AppError> {
-  let metadata_path = PathBuf::from("crash_reports").join(&report_dir).join("metadata.json");
+  let metadata_path = PathBuf::from("crash_reports")
+    .join(&report_dir)
+    .join("metadata.json");
 
   let metadata_content = fs::read_to_string(&metadata_path)
     .await
     .context("Failed to read metadata file")?;
 
-  let mut metadata: ReportMetadata = serde_json::from_str(&metadata_content)
-    .context("Failed to parse metadata")?;
+  let mut metadata: ReportMetadata =
+    serde_json::from_str(&metadata_content).context("Failed to parse metadata")?;
 
   metadata.resolved = payload.resolved;
 
-  let metadata_str = serde_json::to_string_pretty(&metadata)
-    .context("Failed to serialize metadata")?;
+  let metadata_str =
+    serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
 
   fs::write(&metadata_path, metadata_str)
     .await
     .context("Failed to write metadata file")?;
 
-  info!("Updated resolve status for {}: {}", report_dir, payload.resolved);
+  info!(
+    "Updated resolve status for {}: {}",
+    report_dir, payload.resolved
+  );
 
   Ok((StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response())
 }
@@ -344,7 +342,10 @@ fn create_app() -> Router {
     .route("/api/reports", get(list_reports))
     .route("/api/reports/{report_dir}", get(get_report))
     .route("/api/reports/{report_dir}/resolve", post(toggle_resolve))
-    .route("/api/reports/{report_dir}/download/{filename}", get(download_file))
+    .route(
+      "/api/reports/{report_dir}/download/{filename}",
+      get(download_file),
+    )
     .fallback_service(ServeDir::new("web/dist"))
     .layer(cors)
     .layer(TraceLayer::new_for_http())

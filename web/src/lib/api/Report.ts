@@ -1,11 +1,3 @@
-interface ReportListItem {
-    report_id: string;
-    timestamp: string;
-    app_name: string | null;
-    directory: string;
-    resolved?: boolean;
-}
-
 interface ReportMetadata {
     report_id: string;
     timestamp: string;
@@ -17,18 +9,14 @@ interface ReportMetadata {
     resolved?: boolean;
 }
 
-async function fetchReports(): Promise<ReportListItem[]> {
+function getDirectory(report: ReportMetadata): string {
+    return `${report.timestamp}_${report.report_id}`;
+}
+
+async function fetchReports(): Promise<ReportMetadata[]> {
     const response = await fetch('/api/reports');
     if (!response.ok) {
         throw new Error('Failed to fetch reports');
-    }
-    return await response.json();
-}
-
-async function fetchReportDetails(directory: string): Promise<ReportMetadata> {
-    const response = await fetch(`/api/reports/${directory}`);
-    if (!response.ok) {
-        throw new Error('Failed to fetch report details');
     }
     return await response.json();
 }
@@ -48,8 +36,13 @@ async function toggleReportResolved(directory: string, resolved: boolean): Promi
 
 function downloadFile(directory: string, filename: string): void {
     const url = `/api/reports/${directory}/download/${filename}`;
-    window.open(url, '_blank');
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename; // Suggests a filename to the browser
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
-export type { ReportListItem, ReportMetadata }
-export { fetchReports, fetchReportDetails, toggleReportResolved, downloadFile }
+export type { ReportMetadata }
+export { getDirectory, fetchReports, toggleReportResolved, downloadFile }

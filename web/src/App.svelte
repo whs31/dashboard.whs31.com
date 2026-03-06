@@ -6,12 +6,11 @@
     import * as Card from '$lib/components/ui/card';
     import {Button} from '$lib/components/ui/button';
     import {Badge} from '$lib/components/ui/badge';
-    import type {ReportListItem, ReportMetadata} from '$lib/api/Report';
-    import {fetchReports, fetchReportDetails, toggleReportResolved, downloadFile} from '$lib/api/Report';
+    import type {ReportMetadata} from '$lib/api/Report';
+    import {getDirectory, fetchReports, toggleReportResolved, downloadFile} from '$lib/api/Report';
 
     let activeTab: string = $state('crashes');
-    let reports: ReportListItem[] = $state([]);
-    let reportDetails: Map<string, ReportMetadata> = $state(new Map());
+    let reports: ReportMetadata[] = $state([]);
     let loading: boolean = $state(true);
     let error: string | null = $state(null);
 
@@ -28,23 +27,10 @@
         }
     }
 
-    async function loadReportDetails(directory: string): Promise<void> {
-        if (reportDetails.has(directory)) {
-            return;
-        }
-        try {
-            const details = await fetchReportDetails(directory);
-            reportDetails.set(directory, details);
-            reportDetails = reportDetails;
-        } catch (err) {
-            console.error('Failed to load report details:', err);
-        }
-    }
-
-    async function toggleResolve(report: ReportListItem): Promise<void> {
+    async function toggleResolve(report: ReportMetadata): Promise<void> {
         const newResolvedState = !report.resolved;
         try {
-            await toggleReportResolved(report.directory, newResolvedState);
+            await toggleReportResolved(getDirectory(report), newResolvedState);
             report.resolved = newResolvedState;
             reports = reports;
         } catch (err) {
@@ -53,18 +39,16 @@
         }
     }
 
-    function downloadMinidump(report: ReportListItem): void {
-        const details = reportDetails.get(report.directory);
-        if (details?.minidump_filename) {
-            downloadFile(report.directory, details.minidump_filename);
+    function downloadMinidump(report: ReportMetadata): void {
+        if (report?.minidump_filename) {
+            downloadFile(getDirectory(report), report.minidump_filename);
         }
     }
 
-    function downloadLogs(report: ReportListItem): void {
-        const details = reportDetails.get(report.directory);
-        if (details?.log_files && details.log_files.length > 0) {
-            details.log_files.forEach(logFile => {
-                downloadFile(report.directory, logFile);
+    function downloadLogs(report: ReportMetadata): void {
+        if (report?.log_files && report.log_files.length > 0) {
+            report.log_files.forEach(logFile => {
+                downloadFile(getDirectory(report), logFile);
             });
         }
     }
@@ -168,14 +152,15 @@
                                 <Accordion.Root class="w-full">
                                     {#each reports as report (report.report_id)}
                                         <Accordion.Item value={report.report_id}>
-                                            <Accordion.Trigger onclick={() => loadReportDetails(report.directory)}>
+                                            <Accordion.Trigger>
                                                 <div class="flex items-center justify-between w-full pr-4">
                                                     <div class="flex items-center gap-3">
                                                         <span class="font-medium">
                                                             {report.app_name || 'Unknown'}
                                                         </span>
                                                         {#if report.resolved}
-                                                            <Badge variant="outline" class="bg-green-50 text-green-700 border-green-200">
+                                                            <Badge variant="outline"
+                                                                   class="bg-green-50 text-green-700 border-green-200">
                                                                 Resolved
                                                             </Badge>
                                                         {:else}
@@ -196,25 +181,27 @@
                                                             <span class="font-semibold">Report ID:</span> {report.report_id}
                                                         </div>
                                                         <div class="text-sm">
-                                                            <span class="font-semibold">Directory:</span> {report.directory}
+                                                            <span class="font-semibold">Directory:</span> {getDirectory(report)}
                                                         </div>
-                                                        {#if reportDetails.has(report.directory)}
-                                                            {@const details = reportDetails.get(report.directory)}
-                                                            {#if details?.details}
-                                                                <div class="text-sm">
-                                                                    <span class="font-semibold">Details:</span> {details.details}
-                                                                </div>
-                                                            {/if}
-                                                            {#if details?.steps_to_reproduce}
-                                                                <div class="text-sm">
-                                                                    <span class="font-semibold">Steps to Reproduce:</span> {details.steps_to_reproduce}
-                                                                </div>
-                                                            {/if}
+                                                        {#if report.log_files && report.log_files.length > 0}
+                                                            <div class="text-sm">
+                                                                <span class="font-semibold">Log Files:</span> {report.log_files.join(', ')}
+                                                            </div>
+                                                        {/if}
+                                                        {#if report.details}
+                                                            <div class="text-sm">
+                                                                <span class="font-semibold">Details:</span> {report.details}
+                                                            </div>
+                                                        {/if}
+                                                        {#if report.steps_to_reproduce}
+                                                            <div class="text-sm">
+                                                                <span class="font-semibold">Steps to Reproduce:</span> {report.steps_to_reproduce}
+                                                            </div>
                                                         {/if}
                                                     </div>
 
                                                     <div class="flex flex-wrap gap-2">
-                                                        {#if reportDetails.has(report.directory) && reportDetails.get(report.directory)?.minidump_filename}
+                                                        {#if report.minidump_filename}
                                                             <Button
                                                                     variant="outline"
                                                                     size="sm"
@@ -223,7 +210,7 @@
                                                                 Download Minidump
                                                             </Button>
                                                         {/if}
-                                                        {#if reportDetails.has(report.directory) && reportDetails.get(report.directory)?.log_files && reportDetails.get(report.directory)!.log_files.length > 0}
+                                                        {#if report.log_files && report.log_files.length > 0}
                                                             <Button
                                                                     variant="outline"
                                                                     size="sm"
