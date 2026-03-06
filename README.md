@@ -1,93 +1,119 @@
-# MMS CRS
+# MMS Crash Report Server
 
+A crash report server built with Rust and Axum that receives crash dumps, log files, and metadata from client applications.
 
+## Features
 
-## Getting started
+- **Multipart Upload Support**: Handles minidump files, log files, and metadata
+- **Automatic Organization**: Saves crash reports in timestamped directories
+- **JSON Metadata**: Stores report information in structured JSON format
+- **CORS Enabled**: Accepts requests from any origin
+- **Health Check**: HEAD endpoint for server availability checks
+- **No OpenSSL**: Uses rustls for TLS support (when needed)
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## API Endpoints
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+### POST /api/upload
 
-## Add your files
+Accepts multipart form data with the following fields:
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+- `minidump` (file, required): The crash minidump file
+- `logfile_N` (file, optional): Log files (where N is an index)
+- `app_name` (text, optional): Name of the application
+- `details` (text, optional): User-provided crash details
+- `steps_to_reproduce` (text, optional): Steps to reproduce the crash
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Crash report uploaded successfully",
+  "report_id": "uuid-here"
+}
+```
+
+### HEAD /api/upload
+
+Health check endpoint. Returns 200 OK if server is available.
+
+## Building
+
+```bash
+cargo build --release
+```
+
+## Running
+
+```bash
+# Run with default settings (binds to 0.0.0.0:3000)
+cargo run --release
+
+# Or specify a custom bind address
+BIND_ADDRESS=127.0.0.1:8080 cargo run --release
+
+# Enable debug logging
+RUST_LOG=debug cargo run --release
+```
+
+## Configuration
+
+The server can be configured using environment variables:
+
+- `BIND_ADDRESS`: Server bind address (default: `0.0.0.0:3000`)
+- `RUST_LOG`: Logging level (default: `info,tower_http=debug`)
+
+## Crash Report Storage
+
+Crash reports are stored in the `crash_reports/` directory with the following structure:
 
 ```
-cd existing_repo
-git remote add origin http://gitlab.uav.radar-mms.com/developers/v2/ground-control/mms-crs.git
-git branch -M main
-git push -uf origin main
+crash_reports/
+└── 2024-01-15_14-30-45_uuid/
+    ├── metadata.json
+    ├── minidump.dmp
+    ├── app.log
+    └── debug.log
 ```
 
-## Integrate with your tools
+### metadata.json Example
 
-- [ ] [Set up project integrations](http://gitlab.uav.radar-mms.com/developers/v2/ground-control/mms-crs/-/settings/integrations)
+```json
+{
+  "report_id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2024-01-15_14-30-45",
+  "app_name": "MyApp",
+  "details": "Application crashed when clicking button",
+  "steps_to_reproduce": "1. Open app\n2. Click button\n3. Crash",
+  "minidump_filename": "minidump.dmp",
+  "log_files": ["app.log", "debug.log"]
+}
+```
 
-## Collaborate with your team
+## Client Integration
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+The server is designed to work with the crash reporter client. Configure the client with:
 
-## Test and Deploy
+```rust
+let data = CrashReportData {
+    minidump_path: PathBuf::from("crash.dmp"),
+    log_files: vec![PathBuf::from("app.log")],
+    app_name: Some("MyApp".to_string()),
+    upload_url: "http://localhost:3000/api/upload".to_string(),
+};
+```
 
-Use the built-in continuous integration in GitLab.
+## Dependencies
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+- **axum**: Web framework
+- **tokio**: Async runtime
+- **tower-http**: HTTP middleware (CORS, tracing)
+- **serde**: Serialization
+- **chrono**: Timestamp generation
+- **uuid**: Unique report IDs
+- **tracing**: Structured logging
 
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+All dependencies use `rustls` for TLS support, avoiding OpenSSL requirements.
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+See LICENSE file for details.
