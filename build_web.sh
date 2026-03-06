@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Building Svelte frontend..."
+echo "Building Svelte + TypeScript frontend..."
 
 cd web
 
@@ -10,6 +10,9 @@ if [ ! -d "node_modules" ]; then
   echo "Installing dependencies..."
   npm install
 fi
+
+echo "Type checking..."
+npm run check || echo "Warning: Type check had issues, continuing with build..."
 
 echo "Building production bundle..."
 npm run build

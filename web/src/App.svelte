@@ -1,13 +1,30 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte';
 
-  let reports = [];
-  let selectedReport = null;
-  let reportDetails = null;
-  let loading = true;
-  let error = null;
+  interface ReportListItem {
+    report_id: string;
+    timestamp: string;
+    app_name: string | null;
+    directory: string;
+  }
 
-  async function fetchReports() {
+  interface ReportMetadata {
+    report_id: string;
+    timestamp: string;
+    app_name: string | null;
+    details: string | null;
+    steps_to_reproduce: string | null;
+    minidump_filename: string | null;
+    log_files: string[];
+  }
+
+  let reports: ReportListItem[] = $state([]);
+  let selectedReport: ReportListItem | null = $state(null);
+  let reportDetails: ReportMetadata | null = $state(null);
+  let loading: boolean = $state(true);
+  let error: string | null = $state(null);
+
+  async function fetchReports(): Promise<void> {
     try {
       loading = true;
       error = null;
@@ -15,31 +32,31 @@
       if (!response.ok) throw new Error('Failed to fetch reports');
       reports = await response.json();
     } catch (err) {
-      error = err.message;
+      error = err instanceof Error ? err.message : 'Unknown error';
     } finally {
       loading = false;
     }
   }
 
-  async function selectReport(report) {
+  async function selectReport(report: ReportListItem): Promise<void> {
     selectedReport = report;
     try {
       const response = await fetch(`/api/reports/${report.directory}`);
       if (!response.ok) throw new Error('Failed to fetch report details');
       reportDetails = await response.json();
     } catch (err) {
-      error = err.message;
+      error = err instanceof Error ? err.message : 'Unknown error';
       reportDetails = null;
     }
   }
 
-  function downloadFile(filename) {
+  function downloadFile(filename: string): void {
     if (!selectedReport) return;
     const url = `/api/reports/${selectedReport.directory}/download/${filename}`;
     window.open(url, '_blank');
   }
 
-  function closeDetails() {
+  function closeDetails(): void {
     selectedReport = null;
     reportDetails = null;
   }
@@ -50,7 +67,7 @@
     return () => clearInterval(interval);
   });
 
-  function getAppTitle(report) {
+  function getAppTitle(report: ReportListItem): string {
     return report.app_name || 'Unknown App';
   }
 </script>
@@ -83,7 +100,7 @@
       <div class="detail-panel">
         <div class="detail-header">
           <h2>📋 {getAppTitle(selectedReport)}</h2>
-          <button class="btn btn-secondary" on:click={closeDetails}>✕ Close</button>
+          <button class="btn btn-secondary" onclick={closeDetails}>✕ Close</button>
         </div>
 
         <div class="detail-section">
@@ -125,7 +142,7 @@
                 <span class="file-name">📦 {reportDetails.minidump_filename}</span>
                 <button
                   class="btn btn-download"
-                  on:click={() => downloadFile(reportDetails.minidump_filename)}
+                  onclick={() => downloadFile(reportDetails.minidump_filename!)}
                 >
                   ⬇ Download
                 </button>
@@ -136,7 +153,7 @@
                 <span class="file-name">📄 {logFile}</span>
                 <button
                   class="btn btn-download"
-                  on:click={() => downloadFile(logFile)}
+                  onclick={() => downloadFile(logFile)}
                 >
                   ⬇ Download
                 </button>
@@ -162,8 +179,8 @@
         <div
           class="report-card"
           class:selected={selectedReport?.report_id === report.report_id}
-          on:click={() => selectReport(report)}
-          on:keydown={(e) => e.key === 'Enter' && selectReport(report)}
+          onclick={() => selectReport(report)}
+          onkeydown={(e) => e.key === 'Enter' && selectReport(report)}
           role="button"
           tabindex="0"
         >
@@ -175,7 +192,7 @@
           </div>
           <div class="report-timestamp">📅 {report.timestamp}</div>
           <div class="report-actions">
-            <button class="btn btn-primary" on:click|stopPropagation={() => selectReport(report)}>
+            <button class="btn btn-primary" onclick={(e) => { e.stopPropagation(); selectReport(report); }}>
               View Details
             </button>
           </div>

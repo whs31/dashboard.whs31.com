@@ -1,6 +1,6 @@
 # Crash Report Viewer - Web Frontend
 
-A Svelte-based web interface for viewing and managing crash reports.
+A Svelte 5 + TypeScript web interface for viewing and managing crash reports.
 
 ## Features
 
