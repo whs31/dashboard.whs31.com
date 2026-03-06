@@ -3,10 +3,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use axum::{
-  extract::Multipart,
-  http::StatusCode,
+  extract::{Multipart, Path},
+  http::{header, StatusCode},
   response::{IntoResponse, Response},
-  routing::{head, post},
+  routing::{get, head, post},
   Json, Router,
 };
 use chrono::Local;
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -23,6 +24,25 @@ struct UploadResponse {
   success: bool,
   message: String,
   report_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReportMetadata {
+  report_id: String,
+  timestamp: String,
+  app_name: Option<String>,
+  details: Option<String>,
+  steps_to_reproduce: Option<String>,
+  minidump_filename: Option<String>,
+  log_files: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReportListItem {
+  report_id: String,
+  timestamp: String,
+  app_name: Option<String>,
+  directory: String,
 }
 
 #[derive(Debug)]
@@ -207,6 +227,73 @@ async fn upload_crash_report(mut multipart: Multipart) -> Result<Response, AppEr
   Ok((StatusCode::OK, Json(response)).into_response())
 }
 
+async fn list_reports() -> Result<Json<Vec<ReportListItem>>, AppError> {
+  let mut reports = Vec::new();
+  let mut entries = fs::read_dir("crash_reports").await?;
+
+  while let Some(entry) = entries.next_entry().await? {
+    if entry.file_type().await?.is_dir() {
+      let dir_name = entry.file_name().to_string_lossy().to_string();
+      let metadata_path = entry.path().join("metadata.json");
+
+      if let Ok(metadata_content) = fs::read_to_string(&metadata_path).await {
+        if let Ok(metadata) = serde_json::from_str::<ReportMetadata>(&metadata_content) {
+          reports.push(ReportListItem {
+            report_id: metadata.report_id,
+            timestamp: metadata.timestamp,
+            app_name: metadata.app_name,
+            directory: dir_name,
+          });
+        }
+      }
+    }
+  }
+
+  reports.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+  Ok(Json(reports))
+}
+
+async fn get_report(Path(report_dir): Path<String>) -> Result<Json<ReportMetadata>, AppError> {
+  let metadata_path = PathBuf::from("crash_reports").join(&report_dir).join("metadata.json");
+  let metadata_content = fs::read_to_string(&metadata_path)
+    .await
+    .context("Failed to read metadata file")?;
+  let metadata: ReportMetadata = serde_json::from_str(&metadata_content)
+    .context("Failed to parse metadata")?;
+  Ok(Json(metadata))
+}
+
+async fn download_file(Path((report_dir, filename)): Path<(String, String)>) -> Result<Response, AppError> {
+  let file_path = PathBuf::from("crash_reports").join(&report_dir).join(&filename);
+
+  if !file_path.exists() {
+    return Ok((StatusCode::NOT_FOUND, "File not found").into_response());
+  }
+
+  let content = fs::read(&file_path)
+    .await
+    .context("Failed to read file")?;
+
+  let content_type = if filename.ends_with(".dmp") {
+    "application/octet-stream"
+  } else if filename.ends_with(".log") {
+    "text/plain"
+  } else if filename.ends_with(".json") {
+    "application/json"
+  } else {
+    "application/octet-stream"
+  };
+
+  Ok((
+    StatusCode::OK,
+    [
+      (header::CONTENT_TYPE, content_type),
+      (header::CONTENT_DISPOSITION, &format!("attachment; filename=\"{}\"", filename)),
+    ],
+    content,
+  ).into_response())
+}
+
 fn create_app() -> Router {
   let cors = CorsLayer::new()
     .allow_origin(Any)
@@ -216,6 +303,10 @@ fn create_app() -> Router {
   Router::new()
     .route("/api/upload", post(upload_crash_report))
     .route("/api/upload", head(health_check))
+    .route("/api/reports", get(list_reports))
+    .route("/api/reports/{report_dir}", get(get_report))
+    .route("/api/reports/{report_dir}/download/{filename}", get(download_file))
+    .fallback_service(ServeDir::new("web/dist"))
     .layer(cors)
     .layer(TraceLayer::new_for_http())
 }

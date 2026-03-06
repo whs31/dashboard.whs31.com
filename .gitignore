@@ -7,6 +7,11 @@ Cargo.lock
 # Crash reports
 /crash_reports/
 
+# Web/Node
+/web/node_modules/
+/web/dist/
+/web/package-lock.json
+
 # IDE
 .idea/
 .vscode/
