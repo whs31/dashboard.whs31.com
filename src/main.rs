@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use axum::routing::delete;
 use axum::{
   extract::{Multipart, Path},
   http::{header, StatusCode},
@@ -9,35 +10,17 @@ use axum::{
   routing::{get, head, post},
   Json, Router,
 };
-use chrono::Local;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct UploadResponse {
-  success: bool,
-  message: String,
-  report_id: Option<String>,
-}
+mod api;
+mod crash_report;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ReportMetadata {
-  report_id: String,
-  timestamp: String,
-  app_name: Option<String>,
-  details: Option<String>,
-  steps_to_reproduce: Option<String>,
-  minidump_filename: Option<String>,
-  log_files: Vec<String>,
-  #[serde(default)]
-  resolved: bool,
-}
+pub use self::crash_report::CrashReport;
 
 #[derive(Debug)]
 struct AppError(anyhow::Error);
@@ -45,7 +28,7 @@ struct AppError(anyhow::Error);
 impl IntoResponse for AppError {
   fn into_response(self) -> Response {
     error!("Request error: {:?}", self.0);
-    let response = UploadResponse {
+    let response = api::UploadResponse {
       success: false,
       message: format!("Internal server error: {}", self.0),
       report_id: None,
@@ -60,90 +43,6 @@ where
 {
   fn from(err: E) -> Self {
     Self(err.into())
-  }
-}
-
-#[derive(Debug)]
-struct CrashReport {
-  report_id: String,
-  timestamp: String,
-  app_name: Option<String>,
-  details: Option<String>,
-  steps_to_reproduce: Option<String>,
-  minidump: Option<(String, Vec<u8>)>,
-  log_files: Vec<(String, Vec<u8>)>,
-}
-
-impl CrashReport {
-  fn new() -> Self {
-    let report_id = Uuid::new_v4().to_string();
-    let timestamp = Local::now().to_rfc3339().to_string();
-
-    Self {
-      report_id,
-      timestamp,
-      app_name: None,
-      details: None,
-      steps_to_reproduce: None,
-      minidump: None,
-      log_files: Vec::new(),
-    }
-  }
-
-  fn report_dir(&self) -> PathBuf {
-    PathBuf::from("crash_reports").join(format!("{}_{}", self.timestamp, self.report_id))
-  }
-
-  async fn save_to_disk(&self) -> Result<()> {
-    let report_dir = self.report_dir();
-    fs::create_dir_all(&report_dir)
-      .await
-      .context("Failed to create report directory")?;
-
-    if let Some((filename, data)) = &self.minidump {
-      let minidump_path = report_dir.join(filename);
-      let mut file = fs::File::create(&minidump_path)
-        .await
-        .context("Failed to create minidump file")?;
-      file
-        .write_all(data)
-        .await
-        .context("Failed to write minidump data")?;
-      info!("Saved minidump: {}", minidump_path.display());
-    }
-
-    for (filename, data) in &self.log_files {
-      let log_path = report_dir.join(filename);
-      let mut file = fs::File::create(&log_path)
-        .await
-        .context("Failed to create log file")?;
-      file
-        .write_all(data)
-        .await
-        .context("Failed to write log data")?;
-      info!("Saved log file: {}", log_path.display());
-    }
-
-    let metadata = serde_json::json!({
-        "report_id": self.report_id,
-        "timestamp": self.timestamp,
-        "app_name": self.app_name,
-        "details": self.details,
-        "steps_to_reproduce": self.steps_to_reproduce,
-        "minidump_filename": self.minidump.as_ref().map(|(name, _)| name),
-        "log_files": self.log_files.iter().map(|(name, _)| name).collect::<Vec<_>>(),
-        "resolved": false,
-    });
-
-    let metadata_path = report_dir.join("metadata.json");
-    let metadata_str =
-      serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
-    fs::write(&metadata_path, metadata_str)
-      .await
-      .context("Failed to write metadata file")?;
-    info!("Saved metadata: {}", metadata_path.display());
-
-    Ok(())
   }
 }
 
@@ -200,7 +99,7 @@ async fn upload_crash_report(mut multipart: Multipart) -> Result<Response, AppEr
 
   if report.minidump.is_none() {
     warn!("No minidump received in crash report");
-    let response = UploadResponse {
+    let response = api::UploadResponse {
       success: false,
       message: "No minidump file provided".to_string(),
       report_id: None,
@@ -213,16 +112,16 @@ async fn upload_crash_report(mut multipart: Multipart) -> Result<Response, AppEr
 
   info!("Successfully saved crash report: {}", report_id);
 
-  let response = UploadResponse {
+  let response = api::UploadResponse {
     success: true,
     message: "Crash report uploaded successfully".to_string(),
-    report_id: Some(report_id),
+    report_id: Some(report_id.to_string()),
   };
 
   Ok((StatusCode::OK, Json(response)).into_response())
 }
 
-async fn list_reports() -> Result<Json<Vec<ReportMetadata>>, AppError> {
+async fn list_reports() -> Result<Json<Vec<api::ReportMetadata>>, AppError> {
   let mut reports = Vec::new();
   let mut entries = fs::read_dir("crash_reports").await?;
 
@@ -231,7 +130,7 @@ async fn list_reports() -> Result<Json<Vec<ReportMetadata>>, AppError> {
       let metadata_path = entry.path().join("metadata.json");
 
       if let Ok(metadata_content) = fs::read_to_string(&metadata_path).await {
-        if let Ok(metadata) = serde_json::from_str::<ReportMetadata>(&metadata_content) {
+        if let Ok(metadata) = serde_json::from_str::<api::ReportMetadata>(&metadata_content) {
           reports.push(metadata);
         }
       }
@@ -242,16 +141,28 @@ async fn list_reports() -> Result<Json<Vec<ReportMetadata>>, AppError> {
   Ok(Json(reports))
 }
 
-async fn get_report(Path(report_dir): Path<String>) -> Result<Json<ReportMetadata>, AppError> {
+async fn get_report(Path(report_dir): Path<String>) -> Result<Json<api::ReportMetadata>, AppError> {
   let metadata_path = PathBuf::from("crash_reports")
     .join(&report_dir)
     .join("metadata.json");
   let metadata_content = fs::read_to_string(&metadata_path)
     .await
     .context("Failed to read metadata file")?;
-  let metadata: ReportMetadata =
+  let metadata: api::ReportMetadata =
     serde_json::from_str(&metadata_content).context("Failed to parse metadata")?;
   Ok(Json(metadata))
+}
+
+async fn delete_report(Path(report_dir): Path<String>) -> Result<Response, AppError> {
+  let report_dir_path = PathBuf::from("crash_reports").join(&report_dir);
+  if !report_dir_path.exists() || !report_dir_path.is_dir() {
+    return Ok((StatusCode::NOT_FOUND, "Report not found").into_response());
+  }
+  fs::remove_dir_all(&report_dir_path)
+    .await
+    .context("Failed to delete report directory")?;
+  info!("Deleted report: {}", report_dir);
+  Ok((StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response())
 }
 
 async fn download_file(
@@ -308,19 +219,13 @@ async fn toggle_resolve(
 
   let metadata_content = fs::read_to_string(&metadata_path)
     .await
-    .context("Failed to read metadata file")?;
+    .context(format!("Failed to read metadata file: {}", metadata_path.display()))?;
 
-  let mut metadata: ReportMetadata =
+  let mut metadata: api::ReportMetadata =
     serde_json::from_str(&metadata_content).context("Failed to parse metadata")?;
 
   metadata.resolved = payload.resolved;
-
-  let metadata_str =
-    serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
-
-  fs::write(&metadata_path, metadata_str)
-    .await
-    .context("Failed to write metadata file")?;
+  metadata.save_to_disk(&metadata_path)?;
 
   info!(
     "Updated resolve status for {}: {}",
@@ -346,6 +251,7 @@ fn create_app() -> Router {
       "/api/reports/{report_dir}/download/{filename}",
       get(download_file),
     )
+    .route("/api/reports/{report_dir}/delete", delete(delete_report))
     .fallback_service(ServeDir::new("web/dist"))
     .layer(cors)
     .layer(TraceLayer::new_for_http())

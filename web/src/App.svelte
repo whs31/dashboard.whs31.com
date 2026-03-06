@@ -7,7 +7,7 @@
     import {Button} from '$lib/components/ui/button';
     import {Badge} from '$lib/components/ui/badge';
     import type {ReportMetadata} from '$lib/api/Report';
-    import {getDirectory, fetchReports, toggleReportResolved, downloadFile} from '$lib/api/Report';
+    import {fetchReports, toggleReportResolved, downloadFile, deleteReport} from '$lib/api/Report';
 
     let activeTab: string = $state('crashes');
     let reports: ReportMetadata[] = $state([]);
@@ -30,7 +30,7 @@
     async function toggleResolve(report: ReportMetadata): Promise<void> {
         const newResolvedState = !report.resolved;
         try {
-            await toggleReportResolved(getDirectory(report), newResolvedState);
+            await toggleReportResolved(report, newResolvedState);
             report.resolved = newResolvedState;
             reports = reports;
         } catch (err) {
@@ -39,16 +39,26 @@
         }
     }
 
+    async function deleteReportItem(report: ReportMetadata): Promise<void> {
+        try {
+            await deleteReport(report);
+            reports = reports.filter(r => r.report_id !== report.report_id);
+        } catch (err) {
+            error = err instanceof Error ? err.message : 'Failed to delete report';
+            console.error('Failed to delete report:', err);
+        }
+    }
+
     function downloadMinidump(report: ReportMetadata): void {
         if (report?.minidump_filename) {
-            downloadFile(getDirectory(report), report.minidump_filename);
+            downloadFile(report.report_id, report.minidump_filename);
         }
     }
 
     function downloadLogs(report: ReportMetadata): void {
         if (report?.log_files && report.log_files.length > 0) {
             report.log_files.forEach(logFile => {
-                downloadFile(getDirectory(report), logFile);
+                downloadFile(report.report_id, logFile);
             });
         }
     }
@@ -177,11 +187,28 @@
                                             <Accordion.Content>
                                                 <div class="space-y-4 pt-4">
                                                     <div class="flex flex-col gap-2">
-                                                        <div class="text-sm">
-                                                            <span class="font-semibold">Report ID:</span> {report.report_id}
+                                                        <div class="flex flex-wrap gap-2">
+                                                            {#if report.os}
+                                                                <Badge variant="outline"
+                                                                       class="bg-blue-50 text-blue-700 border-blue-200">
+                                                                    {report.os}
+                                                                </Badge>
+                                                            {/if}
+                                                            {#if report.cpu}
+                                                                <Badge variant="outline"
+                                                                       class="bg-yellow-50 text-yellow-700 border-yellow-200">
+                                                                    {report.cpu}
+                                                                </Badge>
+                                                            {/if}
+                                                            {#if report.crash_reason}
+                                                                <Badge variant="destructive"
+                                                                       class="bg-red-50 text-red-700 border-red-200">
+                                                                    {report.crash_reason}
+                                                                </Badge>
+                                                            {/if}
                                                         </div>
                                                         <div class="text-sm">
-                                                            <span class="font-semibold">Directory:</span> {getDirectory(report)}
+                                                            <span class="font-semibold">Report ID:</span> {report.report_id}
                                                         </div>
                                                         {#if report.log_files && report.log_files.length > 0}
                                                             <div class="text-sm">
@@ -226,6 +253,15 @@
                                                         >
                                                             {report.resolved ? 'Mark as Unresolved' : 'Mark as Resolved'}
                                                         </Button>
+                                                        {#if report.resolved}
+                                                            <Button
+                                                                    variant="destructive"
+                                                                    size="sm"
+                                                                    onclick={() => deleteReportItem(report)}
+                                                            >
+                                                                Delete Report
+                                                            </Button>
+                                                        {/if}
                                                     </div>
                                                 </div>
                                             </Accordion.Content>

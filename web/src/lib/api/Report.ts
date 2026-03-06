@@ -7,10 +7,9 @@ interface ReportMetadata {
     minidump_filename: string | null;
     log_files: string[];
     resolved?: boolean;
-}
-
-function getDirectory(report: ReportMetadata): string {
-    return `${report.timestamp}_${report.report_id}`;
+    cpu: string | null;
+    os: string | null;
+    crash_reason: string | null;
 }
 
 async function fetchReports(): Promise<ReportMetadata[]> {
@@ -21,16 +20,25 @@ async function fetchReports(): Promise<ReportMetadata[]> {
     return await response.json();
 }
 
-async function toggleReportResolved(directory: string, resolved: boolean): Promise<void> {
-    const response = await fetch(`/api/reports/${directory}/resolve`, {
+async function toggleReportResolved(report: ReportMetadata, resolved: boolean): Promise<void> {
+    const response = await fetch(`/api/reports/${report.report_id}/resolve`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ resolved }),
+        body: JSON.stringify({resolved}),
     });
     if (!response.ok) {
         throw new Error('Failed to update report status');
+    }
+}
+
+async function deleteReport(report: ReportMetadata): Promise<void> {
+    const response = await fetch(`/api/reports/${report.report_id}/delete`, {
+        method: 'DELETE'
+    });
+    if (!response.ok) {
+        throw new Error('Failed to delete report');
     }
 }
 
@@ -44,5 +52,6 @@ function downloadFile(directory: string, filename: string): void {
     document.body.removeChild(link);
 }
 
-export type { ReportMetadata }
-export { getDirectory, fetchReports, toggleReportResolved, downloadFile }
+
+export type {ReportMetadata}
+export {fetchReports, toggleReportResolved, downloadFile, deleteReport}
